@@ -1,0 +1,15 @@
+{
+  "productId": "13071706",
+  "priceUSD": "130",
+  "totalFloors": "2",
+  "floor": "1",
+  "bedrooms": 3,
+  "rooms": 5,
+  "area": "86.70 m²",
+  "address": "15 Pekini street",
+  "propertyType": "0",
+  "agreementType": "0",
+  "description": "Lorem ipsum",
+  "vipStatus": "0",
+  "realEstateType": "0"
+}

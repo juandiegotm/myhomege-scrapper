@@ -1,0 +1,15 @@
+{
+  "productId": "16262020",
+  "priceUSD": "500",
+  "totalFloors": "8",
+  "floor": "4",
+  "bedrooms": 4,
+  "rooms": 7,
+  "area": "136.70 m²",
+  "address": "Bakhtrioni street",
+  "propertyType": "0",
+  "agreementType": "0",
+  "description": "Lorem ipsum",
+  "vipStatus": "0",
+  "realEstateType": "0"
+}
