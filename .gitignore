@@ -144,3 +144,9 @@ dist
 # End of https://www.toptal.com/developers/gitignore/api/node
 
 .DS_Store
+._.DS_Store
+**/.DS_Store
+**/._.DS_Store
+
+/assessment_sample
+/sample_data

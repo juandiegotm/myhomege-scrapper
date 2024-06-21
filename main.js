@@ -1,27 +1,15 @@
-import puppeteer from 'puppeteer';
+import puppeteer, { TimeoutError }  from 'puppeteer';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import 'dotenv/config'
-import { time } from 'console';
 
 const URL = 'https://statements.tnet.ge/en/statement/create?referrer=myhome';
-
-// const property_test = {
-//     "productId": "16262020",
-//     "priceUSD": "500",
-//     "totalFloors": "8",
-//     "floor": "4",
-//     "bedrooms": 4,
-//     "rooms": 7,
-//     "area": "136.70 m²",
-//     "address": "Bakhtrioni street",
-//     "propertyType": "0",
-//     "agreementType": "0",
-//     "description": "Lorem ipsum",
-//     "vipStatus": "0",
-//     "realEstateType": "0"
-//   }
+// const SAMPLE_DIR = './assessment_sample';
+// const INFO_FILE = "info.txt";
+const SAMPLE_DIR = './sample_data';
+const INFO_FILE = "results.txt";
+const MAX_PHOTOS = 12;
 
 async function startUp() {
     if (isProduction()) {
@@ -31,6 +19,9 @@ async function startUp() {
         });
         const page = await browser.newPage();
         await page.setViewport({ width: 1080, height: 1024 });
+
+        
+
         await login(page);
         return { browser, page }
     } else {
@@ -114,9 +105,10 @@ async function login(page) {
 
 async function loadPhotos(page, photos) {
     let input = await page.$('input[type="file"]');
-    for (let i = 0; i < photos.length; i++) {
+    for (let i = 0; i < photos.length && i < MAX_PHOTOS; i++) {
         await input.uploadFile(photos[i]);
-        input = await page.waitForSelector('input[type="file"]');
+        if(i < MAX_PHOTOS - 1)
+            input = await page.waitForSelector('input[type="file"]');
     }
 }
 
@@ -146,12 +138,14 @@ async function fillInput(page, nameLabel, value, clean = false) {
     await input?.type(value);
 }
 
-async function fillAllInput(page, nameLabel, value) {
-    const labelParents = await page.$$(`label ::-p-text(${nameLabel})`);
-    const container = await labelParents[labelParents.length-1]?.evaluateHandle(el => el.parentElement);
-    const input = await container?.$('input');
+async function fillNamesInput(page, value) {
+    let container = await page.$('#\\33');
+    let input = await container.$('input');
     await input?.type(value);
 
+    container = await page.$('#\\35');
+    input = await container.$('input');
+    await input?.type(value);
 }
 
 async function chooseMainInformationOption(page, section, option) {
@@ -172,7 +166,13 @@ async function listPhotos(dir) {
 }
 
 async function solvePayment(page) {
-    const buttonCardAndBalance = await page.waitForSelector('span ::-p-text(Pay with card and balance)', { timeout: 0 });
+    let buttonCardAndBalance;
+    try{
+        buttonCardAndBalance = await page.waitForSelector('span ::-p-text(Pay with card and balance)');
+    } catch (error) {
+        console.log('No payment needed. Skipping...');
+        return;
+    }
     await buttonCardAndBalance.click();
 
     const selector = '.luk-cursor-not-allowed';
@@ -221,7 +221,7 @@ async function fillPropertyInformation(page, property, photosPath) {
     await page.waitForSelector('span ::-p-text(Bedroom)');
     const firstUncleBedroom = await parentDivRooms.evaluateHandle(el => el.parentElement.children[3]);
     const labelsBedroom = await firstUncleBedroom.$$('label');
-    await labelsBedroom[property.bedrooms - 1].click();
+    await labelsBedroom[parseInt(property.bedrooms) - 1].click();
 
     // Floors
     await fillInput(page, 'Floor', property.floor);
@@ -235,17 +235,17 @@ async function fillPropertyInformation(page, property, photosPath) {
     await selectAllInFurnitureAndApplinces(page, 'Furniture and appliances');
 
     // Pricing
-    await fillInput(page, 'Area', property.area.replace(' m²', '').trim());
+    await fillInput(page, 'Area', property.area.replace(' m²', '').replace(' მ²', '').trim());
     await fillInput(page, 'Total price', property.priceUSD);
     await page.locator('div ::-p-text($)').click();
 
     // Details
     // await fillInput(page, 'Enter phone number', process.env.USER_PHONE, true);
-    await fillInput(page, 'Name', process.env.USER_NAME);
+    // await fillInput(page, 'Name', process.env.USER_NAME);
     await page.locator('textarea').fill(property.description);
 
     // Owner information
-    await fillAllInput(page, 'Name', process.env.USER_NAME);
+    await fillNamesInput(page, process.env.USER_NAME);
     await fillInput(page, 'Type phone number', process.env.USER_PHONE);
 
     // Load photos
@@ -255,16 +255,18 @@ async function fillPropertyInformation(page, property, photosPath) {
     if (process.env.VIP_ALLOWED === "1" && property.vipStatus != null && property.vipStatus != undefined) {
         const serviceContainer = await page.$$('.services_container');
         const vipOptions = await serviceContainer[serviceContainer.length - 1].$$('.checkbox_container');
-        await vipOptions[property.vipStatus].click();
+        await vipOptions[parseInt(property.vipStatus)].click();
     }
 
     // Submit
     await page.locator('button ::-p-text(Publish)').click();
-    page.waitForNavigation();
-
+    await page.waitForNavigation();
+    
     // Paymnet
     if(process.env.ENABLE_PURCHASES === "1")
         await solvePayment(page);
+
+        
 }
 
 async function processDirectory(directory, page) {
@@ -275,27 +277,70 @@ async function processDirectory(directory, page) {
 
         if (stats.isDirectory() === false) continue;
 
-        const infoPath = path.join(fullPath, 'info.txt');
+        const infoPath = path.join(fullPath, INFO_FILE);
         const content = await fs.readFile(infoPath, 'utf-8');
-        const property = JSON.parse(content);
-        await fillPropertyInformation(page, property, fullPath);
+        const property = getPropertyInfo(content);
+        console.log(`Processing property: ${subdirectory}`)
+        await tryProcessProperty(page, property, fullPath);
+
         await page.goto(URL, {
             waitUntil: ["load"],
             timeout: 0,
         });
+
     }
 }
 
+function getPropertyInfo(propertyStr) {
+    let property = JSON.parse(propertyStr);
+    const propertyDefaults = {
+        ...property,
+        realEstateType: property.realEstateType || "0",
+        floor: property.floor || "0",
+        priceUSD: property.priceUSD || property.price || "0",
+        bedrooms: property.bedrooms || "1"
+    }
+    propertyDefaults.priceUSD = propertyDefaults.priceUSD.replace(',', '');
+    return propertyDefaults;
+}
+
+
+async function tryProcessProperty(page, property, fullPath) {
+    try {
+        await fillPropertyInformation(page, property, fullPath);
+    } catch (error) {
+        if (error instanceof TimeoutError) {
+            const maxRetries = 3;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    await fillPropertyInformation(page, property, fullPath);
+                } catch (error) {
+                    if (error instanceof TimeoutError) {
+                        console.error(`Attempt ${i} failed: Navigation timed out`);
+                        if (i === maxRetries) {
+                            console.error('Max retries reached. Giving up.');
+                        }
+                    } else {
+                        throw error;
+                    }
+                }
+            }
+        } else {
+            throw error;
+        }
+    }
+}
+
+
 async function main() {
     let {browser, page } = await startUp();
-
     try {
         if (page.url() !== URL) 
             await page.goto(URL, {
                 waitUntil: ["load"],
                 timeout: 0,
             });
-        await processDirectory('./assessment_sample', page);
+        await processDirectory(SAMPLE_DIR, page);
         await page.goto("https://www.myhome.ge/ka/my/products");
     } catch (error) {
         console.log(error);
